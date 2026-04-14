@@ -142,6 +142,43 @@ func TestHandlerPassesThroughUpstreamRejection(t *testing.T) {
 	}
 }
 
+func TestHandlerPassesThroughUpstreamRedirectWithoutFollowing(t *testing.T) {
+	now := time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC)
+	store := NewMemoryStore()
+
+	upstreamCalls := 0
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls++
+		http.Redirect(w, r, "https://auth.example.com/?rd=https%3A%2F%2Fapp.example.com%2F", http.StatusFound)
+	}))
+	defer upstream.Close()
+
+	handler := NewHandler(Config{
+		DefaultTTL: 5 * time.Minute,
+		UpstreamURL: upstream.URL,
+	}, store, nowFunc(now))
+
+	req := httptest.NewRequest(http.MethodGet, "http://gateway/check", nil)
+	req.Host = "app.example.com"
+	req.Header.Set("X-Forwarded-For", "203.0.113.10")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("expected 302, got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "https://auth.example.com/?rd=https%3A%2F%2Fapp.example.com%2F" {
+		t.Fatalf("expected redirect location to be forwarded, got %q", got)
+	}
+	if upstreamCalls != 1 {
+		t.Fatalf("expected one upstream call, got %d", upstreamCalls)
+	}
+	if store.IsAllowed("app.example.com", "203.0.113.10", now.Add(time.Minute)) {
+		t.Fatal("expected redirect response not to populate cache")
+	}
+}
+
 func TestHandlerUsesHeaderDrivenScopeForSameHostServices(t *testing.T) {
 	now := time.Date(2026, 4, 14, 10, 0, 0, 0, time.UTC)
 	store := NewMemoryStore()
