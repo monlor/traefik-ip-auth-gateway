@@ -1,0 +1,3 @@
+listen_addr: ":8080"
+upstream_url: "http://authelia:9091/api/authz/forward-auth"
+default_ttl: "2h"
