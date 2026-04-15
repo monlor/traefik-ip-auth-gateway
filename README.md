@@ -41,6 +41,7 @@ Define the shared `forwardAuth` middleware once, for example on the `auth-gatewa
 labels:
   - traefik.http.middlewares.auth-forward.forwardauth.address=http://auth-gateway:8080
   - traefik.http.middlewares.auth-forward.forwardauth.trustForwardHeader=true
+  - traefik.http.middlewares.auth-forward.forwardauth.authResponseHeaders=X-Auth-Cache-Status,X-Auth-Cache-Remaining,X-Auth-Cache-Expires-At,Remote-User,Remote-Groups
 ```
 
 Then define per-service cache policy with a `headers` middleware and chain it before `forwardAuth`:
@@ -55,6 +56,10 @@ labels:
 - `X-Auth-Cache-TTL` is optional. If omitted, `auth-gateway` uses the default `2h`.
 - `X-Auth-Cache-Key` is optional. If omitted, the scope is just the request host.
 - Add `X-Auth-Cache-Key` only when multiple services share one host and you need separate cache scopes.
+- `X-Auth-Cache-Status` is `stored` on fresh upstream success and `hit` on cache reuse.
+- `X-Auth-Cache-Remaining` returns the remaining validity window, for example `11h59m58s`.
+- `X-Auth-Cache-Expires-At` returns the absolute UTC expiry time in RFC3339 format.
+- To make these headers reach your backend, include them in `forwardAuth.authResponseHeaders`.
 
 If you do not need a per-service override, you can attach `auth-forward@docker` directly with no extra policy middleware:
 
@@ -74,6 +79,10 @@ http:
       forwardAuth:
         address: "http://auth-gateway:8080"
         trustForwardHeader: true
+        authResponseHeaders:
+          - X-Auth-Cache-Status
+          - X-Auth-Cache-Remaining
+          - X-Auth-Cache-Expires-At
 
     api-auth-policy:
       headers:

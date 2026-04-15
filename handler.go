@@ -11,8 +11,11 @@ import (
 )
 
 const (
-	HeaderCacheTTL = "X-Auth-Cache-TTL"
-	HeaderCacheKey = "X-Auth-Cache-Key"
+	HeaderCacheTTL       = "X-Auth-Cache-TTL"
+	HeaderCacheKey       = "X-Auth-Cache-Key"
+	HeaderCacheStatus    = "X-Auth-Cache-Status"
+	HeaderCacheRemaining = "X-Auth-Cache-Remaining"
+	HeaderCacheExpiresAt = "X-Auth-Cache-Expires-At"
 )
 
 type Handler struct {
@@ -50,9 +53,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ttl > 0 && ip != "" && h.store.IsAllowed(scope, ip, now) {
-		w.WriteHeader(http.StatusOK)
-		return
+	if ttl > 0 && ip != "" {
+		if expiresAt, ok := h.store.ExpiresAt(scope, ip, now); ok {
+			setCacheHeaders(w.Header(), now, expiresAt, "hit")
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 	}
 
 	upstreamReq, err := http.NewRequestWithContext(r.Context(), r.Method, h.config.UpstreamURL, r.Body)
@@ -72,13 +78,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	copyHeader(w.Header(), resp.Header)
-	w.WriteHeader(resp.StatusCode)
-	_, _ = io.Copy(w, resp.Body)
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && ttl > 0 && ip != "" {
 		h.store.Allow(scope, ip, ttl, now)
+		setCacheHeaders(w.Header(), now, now.Add(ttl), "stored")
 		log.Printf("INFO auth cache allow scope=%q ip=%q ttl=%s upstream_status=%d", scope, ip, ttl, resp.StatusCode)
 	}
+
+	w.WriteHeader(resp.StatusCode)
+	_, _ = io.Copy(w, resp.Body)
 }
 
 func RealClientIP(r *http.Request) string {
@@ -136,4 +144,10 @@ func copyHeader(dst http.Header, src http.Header) {
 			dst.Add(key, value)
 		}
 	}
+}
+
+func setCacheHeaders(headers http.Header, now time.Time, expiresAt time.Time, status string) {
+	headers.Set(HeaderCacheStatus, status)
+	headers.Set(HeaderCacheRemaining, expiresAt.Sub(now).Round(time.Second).String())
+	headers.Set(HeaderCacheExpiresAt, expiresAt.UTC().Format(time.RFC3339))
 }

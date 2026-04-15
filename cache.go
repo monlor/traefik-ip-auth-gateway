@@ -21,22 +21,27 @@ func (s *MemoryStore) Allow(scope string, ip string, ttl time.Duration, now time
 	s.allowed[cacheKey(scope, ip)] = now.Add(ttl)
 }
 
-func (s *MemoryStore) IsAllowed(scope string, ip string, now time.Time) bool {
+func (s *MemoryStore) ExpiresAt(scope string, ip string, now time.Time) (time.Time, bool) {
 	s.mu.RLock()
 	expiresAt, ok := s.allowed[cacheKey(scope, ip)]
 	s.mu.RUnlock()
 	if !ok {
-		return false
+		return time.Time{}, false
 	}
 
 	if now.Before(expiresAt) {
-		return true
+		return expiresAt, true
 	}
 
 	s.mu.Lock()
 	delete(s.allowed, cacheKey(scope, ip))
 	s.mu.Unlock()
-	return false
+	return time.Time{}, false
+}
+
+func (s *MemoryStore) IsAllowed(scope string, ip string, now time.Time) bool {
+	_, ok := s.ExpiresAt(scope, ip, now)
+	return ok
 }
 
 func cacheKey(scope string, ip string) string {

@@ -36,6 +36,15 @@ func TestHandlerReturns200WhenHostIPAlreadyAllowed(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
+	if got := rec.Header().Get(HeaderCacheStatus); got != "hit" {
+		t.Fatalf("expected cache status hit, got %q", got)
+	}
+	if got := rec.Header().Get(HeaderCacheRemaining); got != "5m0s" {
+		t.Fatalf("expected remaining ttl 5m0s, got %q", got)
+	}
+	if got := rec.Header().Get(HeaderCacheExpiresAt); got != now.Add(5*time.Minute).UTC().Format(time.RFC3339) {
+		t.Fatalf("expected expires-at header, got %q", got)
+	}
 	if upstreamCalls != 0 {
 		t.Fatalf("expected no upstream call, got %d", upstreamCalls)
 	}
@@ -73,6 +82,15 @@ func TestHandlerCachesSuccessfulUpstreamAuthentication(t *testing.T) {
 	}
 	if rec.Header().Get("Remote-User") != "alice" {
 		t.Fatalf("expected auth response header to be forwarded, got %q", rec.Header().Get("Remote-User"))
+	}
+	if got := rec.Header().Get(HeaderCacheStatus); got != "stored" {
+		t.Fatalf("expected cache status stored, got %q", got)
+	}
+	if got := rec.Header().Get(HeaderCacheRemaining); got != "5m0s" {
+		t.Fatalf("expected remaining ttl 5m0s, got %q", got)
+	}
+	if got := rec.Header().Get(HeaderCacheExpiresAt); got != now.Add(5*time.Minute).UTC().Format(time.RFC3339) {
+		t.Fatalf("expected expires-at header, got %q", got)
 	}
 	if upstreamCalls != 1 {
 		t.Fatalf("expected one upstream call, got %d", upstreamCalls)
