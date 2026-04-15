@@ -3,6 +3,7 @@ package gateway
 import (
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -76,6 +77,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 && ttl > 0 && ip != "" {
 		h.store.Allow(scope, ip, ttl, now)
+		log.Printf("INFO auth cache allow scope=%q ip=%q ttl=%s upstream_status=%d", scope, ip, ttl, resp.StatusCode)
 	}
 }
 
