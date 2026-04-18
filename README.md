@@ -56,7 +56,7 @@ The plugin injects these headers into the downstream request:
 
 ## Static Plugin Registration
 
-### Catalog Plugin
+### Remote Plugin
 
 ```yaml
 experimental:
@@ -66,9 +66,17 @@ experimental:
       version: vX.Y.Z
 ```
 
+Remote loading requires this repository to stay reachable as a public Go module and to publish git tags such as `v0.1.0`. Traefik's plugin catalog also expects the repository to keep:
+
+- a root `.traefik.yml` manifest
+- the GitHub topic `traefik-plugin`
+- a matching `go.mod` module path
+
+This repository already includes the required manifest in [.traefik.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/.traefik.yml) and a remote-loading sample in [traefik/static.remote.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/traefik/static.remote.yml).
+
 ### Local Plugin
 
-This repository includes a local plugin sample in [traefik/static.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/traefik/static.yml) and [traefik/dynamic.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/traefik/dynamic.yml).
+This repository also includes a local plugin sample in [traefik/static.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/traefik/static.yml) and [traefik/dynamic.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/traefik/dynamic.yml).
 
 ```yaml
 experimental:
@@ -114,13 +122,22 @@ http:
           trustForwardHeader: true
 ```
 
-## Local Smoke Setup
+## Smoke Setup
 
 [docker-compose.example.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/docker-compose.example.yml) mounts this repository as a local Traefik plugin and attaches the middleware to `whoami`.
 
 ```bash
 go test ./...
 docker compose -f docker-compose.example.yml up
+```
+
+[docker-compose.remote.example.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/docker-compose.remote.example.yml) does the same thing with Traefik remote plugin loading, so no source mount is needed.
+
+The remote example is pinned to the first published plugin tag `v0.1.0` in [traefik/static.remote.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/traefik/static.remote.yml). Bump that version when you publish a newer release.
+
+```bash
+go test ./...
+docker compose -f docker-compose.remote.example.yml up
 ```
 
 ## Migration From The Old Gateway

@@ -1,0 +1,18 @@
+api:
+  dashboard: true
+
+entryPoints:
+  websecure:
+    address: ":443"
+
+providers:
+  docker:
+    exposedByDefault: false
+  file:
+    filename: /etc/traefik/dynamic.yml
+
+experimental:
+  plugins:
+    ipauth:
+      moduleName: github.com/monlor/traefik-ip-auth-gateway
+      version: v0.1.0
