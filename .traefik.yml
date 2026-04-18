@@ -1,0 +1,16 @@
+displayName: IP Auth Gateway
+type: middleware
+import: github.com/monlor/traefik-ip-auth-gateway
+
+summary: Cache successful forward-auth challenges by host and public IP.
+
+testData:
+  Address: http://authelia:9091/api/authz/forward-auth
+  GrantTTL: 30m
+  ChallengeTTL: 5m
+  Allowlist:
+    - 192.168.31.0/24
+  AuthResponseHeaders:
+    - Remote-User
+    - Remote-Groups
+  TrustForwardHeader: true

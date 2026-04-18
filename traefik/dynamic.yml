@@ -1,0 +1,15 @@
+http:
+  middlewares:
+    whoami-ip-auth:
+      plugin:
+        ipauth:
+          address: "http://authelia:9091/api/authz/forward-auth"
+          grantTTL: "30m"
+          challengeTTL: "5m"
+          allowlist:
+            - "192.168.31.0/24"
+            - "203.0.113.7"
+          authResponseHeaders:
+            - "Remote-User"
+            - "Remote-Groups"
+          trustForwardHeader: true

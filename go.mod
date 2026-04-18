@@ -1,5 +1,3 @@
-module traefik-ip-auth-gateway
+module github.com/monlor/traefik-ip-auth-gateway
 
 go 1.25.1
-
-require gopkg.in/yaml.v3 v3.0.1

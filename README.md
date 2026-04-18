@@ -1,107 +1,140 @@
 # traefik-ip-auth-gateway
 
-An external `forwardAuth` gateway for Traefik that adds a temporary in-memory allowlist by `host + public IP` in front of an upstream identity provider such as Authelia.
+A Traefik HTTP middleware plugin that wraps an upstream `forward-auth` endpoint and caches successful challenges by `middleware + method + host + request URI + public IP`.
+
+It is designed for setups such as Authelia where one browser on one public egress IP should complete the upstream login flow once, and then the same public IP can reuse that authorization until the TTL expires.
 
 ## Behavior
 
-1. Traefik sends each protected request to `auth-gateway`.
-2. A Traefik `headers` middleware can inject `X-Auth-Cache-TTL` and `X-Auth-Cache-Key` before `forwardAuth`.
-3. `auth-gateway` extracts the real client IP from `X-Forwarded-For`.
-4. If `host + cache_key + ip` is still within TTL, it returns `200` immediately.
-5. Otherwise it forwards the request to the upstream auth endpoint.
-6. If upstream auth succeeds, `auth-gateway` caches the scope using the injected TTL.
+1. The plugin receives the protected request directly inside Traefik.
+2. If the client IP matches `allowlist`, the request goes straight to the backend.
+3. If the current `middleware + method + host + request URI + public IP` grant is still valid, the request goes straight to the backend.
+4. Otherwise the plugin calls the configured upstream `forward-auth` endpoint.
+5. The first probe for a new public IP strips `Cookie` so an ambient upstream session cannot auto-authorize a brand new IP.
+6. If upstream returns `3xx`, `401`, or `403`, the plugin records a short pending challenge window and passes the upstream response back to the client.
+7. During that pending window, the next request from the same public IP is allowed to carry `Cookie` to upstream.
+8. The first upstream `2xx` during that pending window stores the IP grant for `grantTTL`.
 
-## Configuration
+## Config
 
-Copy [config.example.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/config.example.yml) to `config.yml` and adjust values.
+All business config lives on each middleware instance. There is no separate `config.yml`.
 
 ```yaml
-listen_addr: ":8080"
-upstream_url: "http://authelia:9091/api/authz/forward-auth"
-default_ttl: "2h"
+address: "http://authelia:9091/api/authz/forward-auth"
+grantTTL: "2h"
+challengeTTL: "5m"
+allowlist:
+  - "192.168.31.0/24"
+authResponseHeaders:
+  - "Remote-User"
+  - "Remote-Groups"
 ```
 
-- `default_ttl` is optional. If omitted, `auth-gateway` defaults to `2h`.
-- `default_ttl` is only the fallback when Traefik does not inject a TTL header.
-- Per-service policy should be injected by Traefik, not stored here.
-- Cache entries are scoped by `host + cache_key + client_ip`, where `cache_key` is optional.
+### Fields
 
-## Run
+- `address` is required and must be an absolute `http://` or `https://` URL.
+- `grantTTL` defaults to `2h`. Set `0s` to disable IP caching and behave like a normal `forward-auth` middleware.
+- `challengeTTL` defaults to `5m`.
+- `allowlist` accepts single IPs or CIDRs, for both LAN and public IPs.
+- `authRequestHeaders` optionally limits which incoming headers are forwarded to upstream. If empty, all non-hop-by-hop request headers are forwarded.
+- `authResponseHeaders` copies selected upstream `2xx` response headers into the downstream request before calling the backend.
+- `trustForwardHeader` defaults to `false`. When `false`, the plugin derives client IP and scheme from the live request instead of trusting incoming `X-Forwarded-*` headers.
+- `preserveLocationHeader` defaults to `false`. When `false`, relative upstream `Location` headers are rewritten onto the auth server origin so redirects behave like Traefik `forwardAuth`.
+- `preserveRequestMethod` defaults to `false`. When `false`, upstream auth requests use `GET`.
+- `forwardBody` defaults to `false`. When `true`, the request body is buffered and sent to upstream auth and the backend.
+- `maxBodySize` defaults to `-1` (unlimited). It is only relevant when `forwardBody=true`.
 
-```bash
-go test ./...
-go run ./cmd/traefik-ip-auth-gateway -config config.yml
+### Diagnostic Headers
+
+The plugin injects these headers into the downstream request:
+
+- `X-Auth-Cache-Status`: `bypass`, `hit`, or `stored`
+- `X-Auth-Cache-Remaining`
+- `X-Auth-Cache-Expires-At`
+
+`X-Auth-Cache-Remaining` and `X-Auth-Cache-Expires-At` are only present for `hit` and `stored`.
+
+## Static Plugin Registration
+
+### Catalog Plugin
+
+```yaml
+experimental:
+  plugins:
+    ipauth:
+      moduleName: github.com/monlor/traefik-ip-auth-gateway
+      version: vX.Y.Z
 ```
 
-## Traefik With Docker Labels
+### Local Plugin
 
-Define the shared `forwardAuth` middleware once, for example on the `auth-gateway` service:
+This repository includes a local plugin sample in [traefik/static.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/traefik/static.yml) and [traefik/dynamic.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/traefik/dynamic.yml).
+
+```yaml
+experimental:
+  localPlugins:
+    ipauth:
+      moduleName: github.com/monlor/traefik-ip-auth-gateway
+```
+
+Traefik loads local plugins from `./plugins-local/src/...`, so mount this repository there when testing locally.
+
+## Docker Labels
+
+Business config stays on the domain-specific middleware itself:
 
 ```yaml
 labels:
-  - traefik.http.middlewares.auth-forward.forwardauth.address=http://auth-gateway:8080
-  - traefik.http.middlewares.auth-forward.forwardauth.trustForwardHeader=true
-  - traefik.http.middlewares.auth-forward.forwardauth.authResponseHeaders=X-Auth-Cache-Status,X-Auth-Cache-Remaining,X-Auth-Cache-Expires-At,Remote-User,Remote-Groups
+  - traefik.http.routers.myapp.middlewares=myapp-ip-auth@docker
+  - traefik.http.middlewares.myapp-ip-auth.plugin.ipauth.address=http://authelia:9091/api/authz/forward-auth
+  - traefik.http.middlewares.myapp-ip-auth.plugin.ipauth.grantTTL=30m
+  - traefik.http.middlewares.myapp-ip-auth.plugin.ipauth.challengeTTL=5m
+  - traefik.http.middlewares.myapp-ip-auth.plugin.ipauth.allowlist=192.168.31.0/24,203.0.113.7
+  - traefik.http.middlewares.myapp-ip-auth.plugin.ipauth.authResponseHeaders=Remote-User,Remote-Groups
+  - traefik.http.middlewares.myapp-ip-auth.plugin.ipauth.trustForwardHeader=true
 ```
 
-Then define per-service cache policy with a `headers` middleware and chain it before `forwardAuth`:
-
-```yaml
-labels:
-  - traefik.http.routers.myapp.middlewares=myapp-auth-chain@docker
-  - traefik.http.middlewares.myapp-auth-policy.headers.customrequestheaders.X-Auth-Cache-TTL=30m
-  - traefik.http.middlewares.myapp-auth-chain.chain.middlewares=myapp-auth-policy,auth-forward
-```
-
-- `X-Auth-Cache-TTL` is optional. If omitted, `auth-gateway` uses the default `2h`.
-- `X-Auth-Cache-Key` is optional. If omitted, the scope is just the request host.
-- Add `X-Auth-Cache-Key` only when multiple services share one host and you need separate cache scopes.
-- `X-Auth-Cache-Status` is `stored` on fresh upstream success and `hit` on cache reuse.
-- `X-Auth-Cache-Remaining` returns the remaining validity window, for example `11h59m58s`.
-- `X-Auth-Cache-Expires-At` returns the absolute UTC expiry time in RFC3339 format.
-- To make these headers reach your backend, include them in `forwardAuth.authResponseHeaders`.
-
-If you do not need a per-service override, you can attach `auth-forward@docker` directly with no extra policy middleware:
-
-```yaml
-labels:
-  - traefik.http.routers.myapp.middlewares=auth-forward@docker
-```
-
-## Traefik File Provider
-
-The same pattern works in a dynamic config file for non-Docker services:
+## File Provider
 
 ```yaml
 http:
   middlewares:
-    auth-forward:
-      forwardAuth:
-        address: "http://auth-gateway:8080"
-        trustForwardHeader: true
-        authResponseHeaders:
-          - X-Auth-Cache-Status
-          - X-Auth-Cache-Remaining
-          - X-Auth-Cache-Expires-At
-
-    api-auth-policy:
-      headers:
-        customRequestHeaders:
-          X-Auth-Cache-TTL: "15m"
-
-    api-auth-chain:
-      chain:
-        middlewares:
-          - api-auth-policy
-          - auth-forward
+    myapp-ip-auth:
+      plugin:
+        ipauth:
+          address: "http://authelia:9091/api/authz/forward-auth"
+          grantTTL: "30m"
+          challengeTTL: "5m"
+          allowlist:
+            - "192.168.31.0/24"
+            - "203.0.113.7"
+          authResponseHeaders:
+            - "Remote-User"
+            - "Remote-Groups"
+          trustForwardHeader: true
 ```
 
-Attach `api-auth-chain` to any router, whether the backend service is Docker-managed or an external URL.
+## Local Smoke Setup
 
-If you do not need an override in file-provider mode, attach `auth-forward` directly to the router and rely on the default `2h`.
+[docker-compose.example.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/docker-compose.example.yml) mounts this repository as a local Traefik plugin and attaches the middleware to `whoami`.
+
+```bash
+go test ./...
+docker compose -f docker-compose.example.yml up
+```
+
+## Migration From The Old Gateway
+
+- `upstream_url` becomes `address`
+- `default_ttl` becomes `grantTTL`
+- `bypass_cidrs` becomes `allowlist`
+- header-driven `X-Auth-Cache-TTL` and `X-Auth-Cache-Key` are removed
+- grants are now scoped by method and full request URI, not just host
+- the standalone gateway process is removed; the plugin runs directly inside Traefik
 
 ## Limits
 
-- Cache is in memory only. Restarting the container clears authenticated IPs.
-- Running multiple `auth-gateway` replicas will produce independent caches.
-- This design improves compatibility with third-party apps that cannot complete OAuth, but it is still weaker than app-specific tokens or mTLS.
+- Grants are stored in memory per Traefik instance.
+- Restarting Traefik clears cached grants and pending challenges.
+- Multiple Traefik replicas do not share grant state.
+- Revocation is TTL-based only. Logging out from the upstream IdP does not revoke an existing cached public IP grant before expiry.
