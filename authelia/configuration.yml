@@ -1,0 +1,52 @@
+theme: auto
+
+server:
+  address: tcp://:9091
+  endpoints:
+    authz:
+      forward-auth:
+        implementation: ForwardAuth
+
+log:
+  level: debug
+
+totp:
+  issuer: lvh.me
+
+authentication_backend:
+  file:
+    path: /config/users.yml
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: auth.lvh.me
+      policy: bypass
+    - domain: app.lvh.me
+      policy: one_factor
+
+session:
+  secret: local_session_secret_that_is_long_enough_for_testing_only
+  cookies:
+    - name: authelia_session
+      domain: lvh.me
+      authelia_url: https://auth.lvh.me
+      default_redirection_url: https://app.lvh.me
+
+regulation:
+  max_retries: 3
+  find_time: 2 minutes
+  ban_time: 5 minutes
+
+storage:
+  encryption_key: local_storage_encryption_key_that_is_long_enough
+  local:
+    path: /config/db.sqlite3
+
+notifier:
+  filesystem:
+    filename: /config/notification.txt
+
+identity_validation:
+  reset_password:
+    jwt_secret: local_reset_password_secret_that_is_long_enough

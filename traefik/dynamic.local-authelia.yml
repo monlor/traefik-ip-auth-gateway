@@ -1,0 +1,26 @@
+http:
+  routers:
+    authelia:
+      rule: Host(`auth.lvh.me`)
+      entryPoints:
+        - websecure
+      tls: true
+      service: authelia
+
+  services:
+    authelia:
+      loadBalancer:
+        servers:
+          - url: http://authelia:9091
+
+  middlewares:
+    whoami-ip-auth:
+      plugin:
+        ipauth:
+          address: "http://authelia:9091/api/authz/forward-auth"
+          grantTTL: "10m"
+          challengeTTL: "5m"
+          authResponseHeaders:
+            - "Remote-User"
+            - "Remote-Groups"
+          trustForwardHeader: true

@@ -140,6 +140,59 @@ go test ./...
 docker compose -f docker-compose.remote.example.yml up
 ```
 
+## Recommended Authelia Setup
+
+If you are integrating this plugin with Authelia, prefer the modern `ForwardAuth` setup shown in [docker-compose.local-authelia.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/docker-compose.local-authelia.yml), [traefik/static.local-authelia.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/traefik/static.local-authelia.yml), [traefik/dynamic.local-authelia.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/traefik/dynamic.local-authelia.yml), and [authelia/configuration.yml](/Users/monlor/Workspace/traefik-ip-auth-gateway/authelia/configuration.yml).
+
+### Recommended Baseline
+
+- Use Authelia's `http://authelia:9091/api/authz/forward-auth` endpoint, not the legacy `/api/verify` flow, for normal Traefik `ForwardAuth` integrations.
+- Configure the Authelia server endpoint explicitly:
+
+```yaml
+server:
+  endpoints:
+    authz:
+      forward-auth:
+        implementation: ForwardAuth
+```
+
+- Put `domain`, `authelia_url`, and `default_redirection_url` under `session.cookies`, not in a global session redirect setting and not as an ad hoc query parameter unless you have a specific reason.
+
+```yaml
+session:
+  cookies:
+    - domain: example.com
+      authelia_url: https://auth.example.com
+      default_redirection_url: https://app.example.com
+```
+
+- Forward the identity headers your backend actually uses. A common set is `Remote-User`, `Remote-Groups`, `Remote-Email`, and `Remote-Name`.
+- Keep the middleware definition close to the protected router or service, because the cache scope includes middleware name, method, host, and full request URI.
+
+### Important Caveats
+
+- Only enable `trustForwardHeader=true` when Traefik is the trusted boundary and you have configured Traefik to reject or overwrite client-supplied forwarded headers correctly. If that trust boundary is weak, client IP and scheme can be spoofed.
+- This plugin caches by public IP. That is appropriate for NAT-based home or office access flows, but it is not appropriate for high-risk apps where multiple users may share one egress IP and must not reuse each other's successful challenge.
+- `grantTTL` is a security tradeoff, not just a performance knob. Longer TTLs reduce auth churn but also extend the window where a previously challenged public IP stays authorized even after upstream logout.
+- `challengeTTL` should stay short. It only exists to allow the follow-up request after the user completes the upstream login flow.
+- Grants are in-memory and local to a single Traefik instance. Restarts clear them, and multiple replicas do not share them.
+- If you run Authelia itself in high-availability mode, use its stateless session storage options rather than the default in-memory behavior. That is separate from this plugin's own per-instance cache behavior.
+- Backends must trust identity headers only from Traefik. Do not let clients reach the backend directly with `Remote-User`-style headers.
+
+### Sensible Defaults
+
+- Use `grantTTL=0s` for sensitive admin or operator surfaces where you want standard `ForwardAuth` behavior with no IP reuse.
+- Use a short `grantTTL`, for example `5m` to `30m`, for consumer-facing apps where temporary IP reuse is acceptable.
+- Keep `preserveLocationHeader=false` for Authelia-style redirect handling unless you know your upstream already emits the exact public URL you want returned to the client.
+- Use real subdomains of the same parent domain in production, such as `auth.example.com` and `app.example.com`, so Authelia session cookies and redirects behave predictably.
+
+### Local Development
+
+- For local browser testing, `app.lvh.me` and `auth.lvh.me` are a practical choice because `lvh.me` resolves to `127.0.0.1` without editing `/etc/hosts`.
+- Avoid `localhost` as the Authelia cookie domain. Authelia's modern session cookie validation expects a real cookie domain, which means a parent domain with at least one dot or an IP address.
+- Expect a certificate warning if you use Traefik's default self-signed cert on `443`.
+
 ## Migration From The Old Gateway
 
 - `upstream_url` becomes `address`

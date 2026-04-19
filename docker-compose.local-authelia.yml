@@ -1,0 +1,29 @@
+services:
+  traefik:
+    image: traefik:v3.4
+    command:
+      - --configFile=/etc/traefik/traefik.yml
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./traefik/static.local-authelia.yml:/etc/traefik/traefik.yml:ro
+      - ./traefik/dynamic.local-authelia.yml:/etc/traefik/dynamic.yml:ro
+      - .:/plugins-local/src/github.com/monlor/traefik-ip-auth-gateway:ro
+
+  authelia:
+    image: authelia/authelia:4
+    volumes:
+      - ./authelia:/config
+
+  whoami:
+    image: traefik/whoami:v1.11
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whoami.rule=Host(`app.lvh.me`)
+      - traefik.http.routers.whoami.entrypoints=websecure
+      - traefik.http.routers.whoami.tls=true
+      - traefik.http.routers.whoami.middlewares=whoami-ip-auth@file
+      - traefik.http.services.whoami.loadbalancer.server.port=80

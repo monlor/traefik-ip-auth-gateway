@@ -1,2 +1,4 @@
 /auth-gateway
 /traefik-ip-auth-gateway
+authelia/db.sqlite3
+authelia/notification.txt
